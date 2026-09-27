@@ -1,0 +1,13 @@
+# ----------- Projects -----------
+bin/
+obj/
+/packages/
+/Majo.Terminal.sln.DotSettings.user
+
+# ----------- Rider -----------
+riderModule.iml
+/_ReSharper.Caches/
+.idea/
+
+# ----------- Custom -----------
+/artifacts/
