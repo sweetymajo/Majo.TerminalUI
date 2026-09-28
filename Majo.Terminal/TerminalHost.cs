@@ -1,4 +1,7 @@
+using System.Text;
 using Majo.LineEditor;
+using Majo.Logging;
+using Sharprompt;
 using LineEditing = Majo.LineEditor.LineEditor;
 
 #if NET9_0_OR_GREATER
@@ -9,111 +12,186 @@ using LockType = System.Object;
 
 namespace Majo.Terminal;
 
-internal class TerminalHost : IDisposable
+
+public static class TerminalHost
 {
-    /// <summary>
-    /// Maximum size of the command buffer in UTF-8 bytes
-    /// </summary>
-    private const int CommandBufferSize = 64 * 1024;
-    
-    /// <summary>
-    /// Maximum number of commands to keep in history
-    /// </summary>
-    private const int HistoryCount = 100;
-    
-    /// <summary>
-    /// Interval in milliseconds to the poll for new input
-    /// </summary>
-    private const int PollInterval = 100;
-    
-    /// <summary>
-    /// Prompt string to display before each command
-    /// </summary>
-    private const string Prompt = "> ";
-    
-    /// <summary>
-    /// Lock to synchronize access to the terminal
-    /// </summary>
-    private readonly LockType _terminalLock = new();
-    
-    /// <summary>
-    /// Queue to buffer output lines before they are written to the terminal
-    /// </summary>
-    private readonly Queue<string> _bufferedOutput = new();
-    
-    /// <summary>
-    /// Semaphore to ensure that only one modal operation (like a prompt) is active at a time
-    /// </summary>
-    private readonly SemaphoreSlim _modalSemaphore = new(1, 1);
-    
-    /// <summary>
-    /// Indicates whether the current environment supports interactive terminal operations
-    /// </summary>
-    private readonly bool _interactive;
-
-    /// <summary>
-    /// The line editor instance for handling user input in interactive mode
-    /// </summary>
-    private readonly LineEditing? _lineEditor;
-    
-    /// <summary>
-    /// Cancellation token source for the active read operation
-    /// </summary>
-    private CancellationTokenSource? _activeReadCts;
-    
-    /// <summary>
-    /// Task representing the active read operation
-    /// </summary>
-    private Task<ReadResult>? _activeReadTask;
-    
-    /// <summary>
-    /// Indicates whether the command loop is currently active
-    /// </summary>
-    private bool _commandLoopActive;
-    
-    /// <summary>
-    /// Indicates whether a modal operation currently owns the terminal
-    /// </summary>
-    private bool _modalActive;
-    
-    /// <summary>
-    /// Indicates whether the object has been disposed
-    /// </summary>
-    private bool _disposed;
-
-    /// <summary>
-    /// Indicates whether the terminal supports color output
-    /// </summary>
-    internal bool SupportsColor => !Console.IsOutputRedirected;
-    
     /// <summary>
     /// Event triggered when the user enters a command
     /// </summary>
-    internal event Action<string>? CommandEntered;
+    public static event Action<string>? CommandEntered;
     
     /// <summary>
     /// Event triggered when the user interrupts the command loop
     /// </summary>
-    internal event Action? Interrupted;
+    public static event Action? Interrupted;
+    
+    /// <summary>
+    /// Configuration for the terminal host
+    /// </summary>
+    private static TerminalConfig? _config;
+    
+    /// <summary>
+    /// Lock to synchronize access to the terminal
+    /// </summary>
+    private static readonly LockType TerminalLock = new();
+    
+    /// <summary>
+    /// Queue to buffer output lines before they are written to the terminal
+    /// </summary>
+    private static readonly Queue<string> BufferedOutput = new();
+    
+    /// <summary>
+    /// Semaphore to ensure that only one modal operation (like a prompt) is active at a time
+    /// </summary>
+    private static readonly SemaphoreSlim ModalSemaphore = new(1, 1);
+    
+    /// <summary>
+    /// Indicates whether the current environment supports interactive terminal operations
+    /// </summary>
+    private static bool _interactive;
+    
+    /// <summary>
+    /// Indicates whether the terminal host has been initialized
+    /// </summary>
+    private static bool _initialized;
 
     /// <summary>
-    /// Construct
+    /// The line editor instance for handling user input in interactive mode
     /// </summary>
-    internal TerminalHost()
+    private static LineEditing? _lineEditor;
+    
+    /// <summary>
+    /// Cancellation token source for the active read operation
+    /// </summary>
+    private static CancellationTokenSource? _activeReadCts;
+    
+    /// <summary>
+    /// Task representing the active read operation
+    /// </summary>
+    private static Task<ReadResult>? _activeReadTask;
+    
+    /// <summary>
+    /// Indicates whether the command loop is currently active
+    /// </summary>
+    private static bool _commandLoopActive;
+    
+    /// <summary>
+    /// Indicates whether a modal operation currently owns the terminal
+    /// </summary>
+    private static bool _modalActive;
+    
+    /// <summary>
+    /// Indicates whether the original Sharprompt.ThrowExceptionOnCancel value has been stored
+    /// </summary>
+    private static bool _originalThrowExceptionOnCancel;
+    
+    /// <summary>
+    /// Indicates whether Sharprompt has been configured for the terminal host
+    /// </summary>
+    private static bool _sharpromptConfigured;
+
+    /// <summary>
+    /// Indicates whether the terminal supports color output
+    /// </summary>
+    private static bool SupportsColor => !Console.IsOutputRedirected;
+    
+    /// <summary>
+    /// Gets the terminal configuration, throwing an exception if the terminal host has not been initialized
+    /// </summary>
+    private static TerminalConfig Config
     {
-        Console.OutputEncoding = System.Text.Encoding.UTF8;
-        
-        _interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
-        
-        if (_interactive)
+        get
         {
-            _lineEditor = new LineEditing(new LineEditorOption
+            ThrowIfNotInitialized();
+            return _config!;
+        }
+    }
+
+    /// <summary>
+    /// Initializes the terminal host with the specified configuration
+    /// </summary>
+    /// <param name="config">Optional configuration for the terminal host</param>
+    public static void  Initialize(TerminalConfig? config)
+    {
+        lock (TerminalLock)
+        {
+            if (_initialized)
             {
-                CommandBufferSize = CommandBufferSize,
-                HistoryCount = HistoryCount,
-                PollInterval = PollInterval,
-                Prompt = Prompt
-            });
+                return;
+            }
+            
+            var actualConfig = config ?? new TerminalConfig();
+
+            LineEditing? lineEditor = null;
+            bool loggerInitialized = false;
+            bool logSubscribed = false;
+
+            try
+            {
+                bool interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
+                
+                if (interactive)
+                {
+                    _originalThrowExceptionOnCancel = Prompt.ThrowExceptionOnCancel;
+                    Prompt.ThrowExceptionOnCancel = true;
+                    _sharpromptConfigured = true;
+            
+                    lineEditor = new LineEditing(new LineEditorOption
+                    {
+                        CommandBufferSize = actualConfig.CommandBufferSize,
+                        HistoryCount = actualConfig.HistoryCount,
+                        PollInterval = actualConfig.PollInterval,
+                        Prompt = actualConfig.Prompt,
+                        MultiLine = actualConfig.MultiLine
+                    });
+                }
+                
+                Logger.Initialize(actualConfig.Logging);
+                loggerInitialized = true;
+                
+                _config = actualConfig;
+                _lineEditor = lineEditor;
+                _interactive = interactive;
+                
+                _activeReadCts = null;
+                _activeReadTask = null;
+                _commandLoopActive = false;
+                _modalActive = false;
+                BufferedOutput.Clear();
+                
+                _initialized = true;
+                
+                Logger.LogWritten += OnLogWritten;
+                logSubscribed = true;
+                
+            }
+            catch
+            {
+                if (logSubscribed)
+                {
+                    Logger.LogWritten -= OnLogWritten;
+                }
+                
+                if (loggerInitialized)
+                {
+                    Logger.Shutdown();
+                }
+                
+                lineEditor?.Dispose();
+                
+                if (_sharpromptConfigured)
+                {
+                    Prompt.ThrowExceptionOnCancel = _originalThrowExceptionOnCancel;
+                    _sharpromptConfigured = false;
+                }
+                
+                _config = null;
+                _lineEditor = null;
+                _interactive = false;
+                _initialized = false;
+                
+                throw;
+            }
         }
     }
 
@@ -121,13 +199,13 @@ internal class TerminalHost : IDisposable
     /// Runs the command loop asynchronously, reading commands from the user and invoking the CommandEntered event
     /// </summary>
     /// <param name="ct">Cancellation token</param>
-    internal async Task RunAsync(CancellationToken ct = default)
+    public static async Task RunAsync(CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(Interrupted);
         
-        lock (_terminalLock)
+        lock (TerminalLock)
         {
-            ThrowIfDisposed();
+            ThrowIfNotInitialized();
             
             if (_commandLoopActive)
             {
@@ -182,7 +260,7 @@ internal class TerminalHost : IDisposable
         }
         finally
         {
-            lock (_terminalLock)
+            lock (TerminalLock)
             {
                 _commandLoopActive = false;
             }
@@ -196,7 +274,8 @@ internal class TerminalHost : IDisposable
     /// <param name="ct">Cancellation token</param>
     /// <typeparam name="T">Operation return type</typeparam>
     /// <returns>Operation result</returns>
-    internal async Task<T> RunModalAsync<T>(Func<T> action, CancellationToken ct = default)
+    // ReSharper disable once MemberCanBePrivate.Global
+    public static async Task<T> RunModalAsync<T>(Func<T> action, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(action);
 
@@ -206,7 +285,7 @@ internal class TerminalHost : IDisposable
                 "The current environment does not support interactive terminal operations.");
         }
         
-        await _modalSemaphore.WaitAsync(ct).ConfigureAwait(false);
+        await ModalSemaphore.WaitAsync(ct).ConfigureAwait(false);
         
         bool modalActive = false;
         bool alternateScreenEntered = false;
@@ -216,9 +295,9 @@ internal class TerminalHost : IDisposable
             CancellationTokenSource? activeReadCts;
             Task<ReadResult>? activeReadTask;
 
-            lock (_terminalLock)
+            lock (TerminalLock)
             {
-                ThrowIfDisposed();
+                ThrowIfNotInitialized();
 
                 if (_modalActive)
                 {
@@ -271,7 +350,7 @@ internal class TerminalHost : IDisposable
             {
                 if (modalActive)
                 {
-                    lock (_terminalLock)
+                    lock (TerminalLock)
                     {
                         try
                         {
@@ -284,29 +363,89 @@ internal class TerminalHost : IDisposable
                     }
                 }
                 
-                _modalSemaphore.Release();
+                ModalSemaphore.Release();
             }
         }
     }
 
     /// <summary>
+    /// Displays a selection prompt and returns the selected value
+    /// </summary>
+    /// <param name="title">Prompt title</param>
+    /// <param name="options">Available options</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <typeparam name="T">Option value type</typeparam>
+    /// <returns>The selected value</returns>
+    public static async Task<T> SelectAsync<T>(string title, IReadOnlyList<SelectionOption<T>> options, 
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(options);
+
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+
+            SelectionOption<T> selected = await RunModalAsync(
+                () => Prompt.Select(title, options, textSelector: option => option.Text), ct);
+
+            return selected.Value;
+        }
+        catch (PromptCanceledException e)
+        {
+            throw new OperationCanceledException("The terminal selection was canceled.", e, ct);
+        }
+    }
+    
+    /// <summary>
+    /// Displays a text-input prompt
+    /// </summary>
+    /// <param name="title">Prompt title</param>
+    /// <param name="validator">Optional input validator that returns an error message for invalid input</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>The entered text</returns>
+    public static Task<string> InputAsync(string title, Func<string, string?>? validator = null, 
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+
+        return RunModalAsync(() =>
+        {
+            while (true)
+            {
+                string value = Prompt.Input<string?>(title) ?? string.Empty;
+                string? error = validator?.Invoke(value);
+
+                if (error is null)
+                {
+                    return value;
+                }
+
+                Console.WriteLine(error);
+                Console.WriteLine();
+            }
+        }, ct);
+    }
+    
+    /// <summary>
     /// Writes text to the terminal
     /// </summary>
     /// <param name="text">Text</param>
-    internal void Write(string text)
+    // ReSharper disable once MemberCanBePrivate.Global
+    public static void Write(string text)
     {
         if (string.IsNullOrEmpty(text))
         {
             return;
         }
 
-        lock (_terminalLock)
+        lock (TerminalLock)
         {
-            ThrowIfDisposed();
+            ThrowIfNotInitialized();
 
             if (_modalActive)
             {
-                _bufferedOutput.Enqueue(text);
+                BufferedOutput.Enqueue(text);
                 return;
             }
             
@@ -314,22 +453,62 @@ internal class TerminalHost : IDisposable
         }
     }
     
-    public void Dispose()
+    /// <summary>
+    /// Disposes the terminal host, cancelling any active read operations and releasing resources
+    /// </summary>
+    public static void Shutdown()
     {
-        CancellationTokenSource? activeReadCts;
-        
-        lock (_terminalLock)
+        lock (TerminalLock)
         {
-            if (_disposed)
+            if (!_initialized)
             {
                 return;
             }
+            
+            if (_commandLoopActive)
+            {
+                throw new InvalidOperationException("Cannot shutdown while the command loop is active.");
+            }
+            
+            if (_modalActive)
+            {
+                throw new InvalidOperationException("Cannot shutdown while a modal operation is active.");
+            }
 
-            _disposed = true;
-            activeReadCts = _activeReadCts;
+            _initialized = false;
         }
+
+        Logger.LogWritten -= OnLogWritten;
         
-        activeReadCts?.Cancel();
+        try
+        {
+            _lineEditor?.Dispose();
+        }
+        finally
+        {
+            Logger.Shutdown();
+
+            lock (TerminalLock)
+            {
+                if (_sharpromptConfigured)
+                {
+                    Prompt.ThrowExceptionOnCancel = _originalThrowExceptionOnCancel;
+                    _sharpromptConfigured = false;
+                }
+                
+                _activeReadCts = null;
+                _activeReadTask = null;
+                _lineEditor = null;
+                _config = null;
+            
+                _interactive = false;
+            
+                BufferedOutput.Clear();
+                
+                CommandEntered = null;
+                Interrupted = null;
+            }
+        }
     }
     
     /// <summary>
@@ -337,19 +516,19 @@ internal class TerminalHost : IDisposable
     /// </summary>
     /// <param name="ct">Cancellation token</param>
     /// <returns>Read result</returns>
-    private async Task<ReadResult> ReadCommandAsync(CancellationToken ct = default)
+    private static async Task<ReadResult> ReadCommandAsync(CancellationToken ct = default)
     {
         using CancellationTokenSource readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         
-        await _modalSemaphore.WaitAsync(ct).ConfigureAwait(false);
+        await ModalSemaphore.WaitAsync(ct).ConfigureAwait(false);
         
         Task<ReadResult> readTask;
 
         try
         {
-            lock (_terminalLock)
+            lock (TerminalLock)
             {
-                ThrowIfDisposed();
+                ThrowIfNotInitialized();
 
                 readTask = _lineEditor!.ReadLineAsync(readCts.Token).AsTask();
 
@@ -359,7 +538,7 @@ internal class TerminalHost : IDisposable
         }
         finally
         {
-            _modalSemaphore.Release();
+            ModalSemaphore.Release();
         }
 
         try
@@ -368,7 +547,7 @@ internal class TerminalHost : IDisposable
         }
         finally
         {
-            lock (_terminalLock)
+            lock (TerminalLock)
             {
                 if (ReferenceEquals(readTask, _activeReadTask))
                 {
@@ -383,7 +562,7 @@ internal class TerminalHost : IDisposable
     /// Writes text directly to the console
     /// </summary>
     /// <param name="text">Text</param>
-    private void WriteDirect(string text)
+    private static void WriteDirect(string text)
     {
         if (_interactive && _lineEditor is not null && _activeReadTask is { IsCompleted: false })
         {
@@ -398,22 +577,128 @@ internal class TerminalHost : IDisposable
     /// <summary>
     /// Flushes any buffered output to the console
     /// </summary>
-    private void FlushBufferedOutput()
+    private static void FlushBufferedOutput()
     {
-        while (0 < _bufferedOutput.Count)
+        while (0 < BufferedOutput.Count)
         {
-            Console.Out.Write(_bufferedOutput.Dequeue());
+            Console.Out.Write(BufferedOutput.Dequeue());
         }
         
         Console.Out.Flush();
     }
+
+    /// <summary>
+    /// Handles log entries written to the logger, formatting and writing them to the terminal
+    /// </summary>
+    /// <param name="entry">The log entry</param>
+    private static void OnLogWritten(LogEntry entry)
+    {
+        if ((int)entry.Level < (int)Config.TerminalLogLevel)
+        {
+            return;
+        }
+        
+        Write(FormatLogEntry(entry));
+    }
+
+    /// <summary>
+    /// Formats a log entry for terminal output
+    /// </summary>
+    /// <param name="entry">The log entry</param>
+    /// <returns>The formatted log entry string</returns>
+    private static string FormatLogEntry(LogEntry entry)
+    {
+        var builder = new StringBuilder();
+        
+        builder.Append('[').Append(entry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")).Append("] [");
+        
+        bool useColor = SupportsColor && Config.TerminalLogColorMode != TerminalLogColorMode.None;
+
+        if (useColor)
+        {
+            builder.Append(GetLogLevelColor(entry.Level));
+        }
+
+        builder.Append(entry.LevelText);
+        
+        if (useColor)
+        {
+            builder.Append("\e[39m");
+        }
+        
+        builder.Append("] [").Append(entry.Tag).Append("] ").Append(entry.Content).AppendLine();
+        
+        if (entry.Exception is not null)
+        {
+            builder.AppendLine(entry.Exception.ToString());
+        }
+        
+        return builder.ToString();
+    }
     
     /// <summary>
-    /// Throws if this object has been disposed
+    /// Returns the ANSI escape code for the specified log level based on the configured color mode
     /// </summary>
-    private void ThrowIfDisposed()
+    /// <param name="level">The log level</param>
+    /// <returns>The ANSI escape code for the log level color</returns>
+    private static string GetLogLevelColor(LogLevel level)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        return Config.TerminalLogColorMode switch
+        {
+            TerminalLogColorMode.None => string.Empty,
+            TerminalLogColorMode.Ansi16 => GetAnsi16LogLevelColor(level),
+            TerminalLogColorMode.TrueColor => GetTrueColorLogLevelColor(level),
+            _ => throw new ArgumentOutOfRangeException()
+        };
+    }
+    
+    /// <summary>
+    /// Returns the ANSI escape code for the specified log level in 16-color mode
+    /// </summary>
+    /// <param name="level">The log level</param>
+    /// <returns>The ANSI escape code for the log level color</returns>
+    private static string GetAnsi16LogLevelColor(LogLevel level)
+    {
+        return level switch
+        {
+            LogLevel.Verbose => "\e[90m",
+            LogLevel.Debug => "\e[94m",
+            LogLevel.Information => "\e[92m",
+            LogLevel.Warning => "\e[93m",
+            LogLevel.Error => "\e[91m",
+            LogLevel.Fatal => "\e[31m",
+            _ => "\e[39m"
+        };
+    }
+    
+    /// <summary>
+    /// Returns the ANSI escape code for the specified log level in true color (24-bit RGB)
+    /// </summary>
+    /// <param name="level">The log level</param>
+    /// <returns>The ANSI escape code for the log level color</returns>
+    private static string GetTrueColorLogLevelColor(LogLevel level)
+    {
+        return level switch
+        {
+            LogLevel.Verbose => "\e[38;2;118;118;118m",
+            LogLevel.Debug => "\e[38;2;59;120;255m",
+            LogLevel.Information => "\e[38;2;22;198;12m",
+            LogLevel.Warning => "\e[38;2;249;241;165m",
+            LogLevel.Error => "\e[38;2;231;72;86m",
+            LogLevel.Fatal => "\e[38;2;197;15;31m",
+            _ => "\e[39m"
+        };
+    }
+    
+    /// <summary>
+    /// Throws an exception if the terminal host has not been initialized
+    /// </summary>
+    private static void ThrowIfNotInitialized()
+    {
+        if (!_initialized)
+        {
+            throw new InvalidOperationException("TerminalHost has not been initialized. Call Initialize() first.");
+        }
     }
 
     /// <summary>
