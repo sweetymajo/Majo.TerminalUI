@@ -1,5 +1,5 @@
 <Solution>
   <Project Path="../Majo.LineEditor/Majo.LineEditor/Majo.LineEditor.csproj" />
   <Project Path="../Majo.Logging/Majo.Logging/Majo.Logging.csproj" />
-  <Project Path="Majo.Terminal/Majo.Terminal.csproj" />
+  <Project Path="Majo.TerminalUI/Majo.TerminalUI.csproj" />
 </Solution>

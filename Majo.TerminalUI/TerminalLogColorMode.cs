@@ -1,4 +1,4 @@
-﻿namespace Majo.Terminal;
+﻿namespace Majo.TerminalUI;
 
 /// <summary>
 /// Represents the color mode for terminal log output

@@ -2,7 +2,7 @@
 bin/
 obj/
 /packages/
-/Majo.Terminal.sln.DotSettings.user
+/Majo.TerminalUI.sln.DotSettings.user
 
 # ----------- Rider -----------
 riderModule.iml

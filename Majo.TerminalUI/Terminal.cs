@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text;
 using Majo.LineEditor;
 using Majo.Logging;
@@ -10,10 +12,10 @@ using LockType = System.Threading.Lock;
 using LockType = System.Object;
 #endif
 
-namespace Majo.Terminal;
+namespace Majo.TerminalUI;
 
 
-public static class TerminalHost
+public static class Terminal
 {
     /// <summary>
     /// Event triggered when the user enters a command
@@ -26,7 +28,7 @@ public static class TerminalHost
     public static event Action? Interrupted;
     
     /// <summary>
-    /// Configuration for the terminal host
+    /// Configuration for the terminal
     /// </summary>
     private static TerminalConfig? _config;
     
@@ -51,7 +53,7 @@ public static class TerminalHost
     private static bool _interactive;
     
     /// <summary>
-    /// Indicates whether the terminal host has been initialized
+    /// Indicates whether the terminal has been initialized
     /// </summary>
     private static bool _initialized;
 
@@ -86,9 +88,29 @@ public static class TerminalHost
     private static bool _originalThrowExceptionOnCancel;
     
     /// <summary>
-    /// Indicates whether Sharprompt has been configured for the terminal host
+    /// Indicates whether Sharprompt has been configured for the terminal
     /// </summary>
     private static bool _sharpromptConfigured;
+
+    /// <summary>
+    /// Indicates whether the terminal owns the logger instance
+    /// </summary>
+    private static bool _ownsLogger;
+    
+    /// <summary>
+    /// The Windows console output handle, used for enabling virtual terminal processing
+    /// </summary>
+    private static IntPtr _windowsOutputHandle;
+    
+    /// <summary>
+    /// Stores the original Windows console output mode before enabling virtual terminal processing
+    /// </summary>
+    private static uint _originalWindowsOutputMode;
+    
+    /// <summary>
+    /// Indicates whether the Windows console output mode has been changed to enable virtual terminal processing
+    /// </summary>
+    private static bool _windowsOutputModeChanged;
 
     /// <summary>
     /// Indicates whether the terminal supports color output
@@ -96,7 +118,7 @@ public static class TerminalHost
     private static bool SupportsColor => !Console.IsOutputRedirected;
     
     /// <summary>
-    /// Gets the terminal configuration, throwing an exception if the terminal host has not been initialized
+    /// Gets the terminal configuration, throwing an exception if the terminal has not been initialized
     /// </summary>
     private static TerminalConfig Config
     {
@@ -108,10 +130,10 @@ public static class TerminalHost
     }
 
     /// <summary>
-    /// Initializes the terminal host with the specified configuration
+    /// Initializes the terminal with the specified configuration
     /// </summary>
-    /// <param name="config">Optional configuration for the terminal host</param>
-    public static void  Initialize(TerminalConfig? config)
+    /// <param name="config">Optional configuration for the terminal</param>
+    public static void  Initialize(TerminalConfig? config = null)
     {
         lock (TerminalLock)
         {
@@ -123,18 +145,30 @@ public static class TerminalHost
             var actualConfig = config ?? new TerminalConfig();
 
             LineEditing? lineEditor = null;
-            bool loggerInitialized = false;
+            bool ownsLogger = false;
             bool logSubscribed = false;
 
             try
             {
-                bool interactive = !Console.IsInputRedirected && !Console.IsOutputRedirected;
+                bool supportedSystem = OperatingSystem.IsWindows() || OperatingSystem.IsLinux();
+                bool interactive = supportedSystem && !Console.IsInputRedirected && !Console.IsOutputRedirected;
+
+                if (!supportedSystem)
+                {
+                    throw new PlatformNotSupportedException(
+                        "The current operating system does not support interactive terminal operations.");
+                }
                 
                 if (interactive)
                 {
                     _originalThrowExceptionOnCancel = Prompt.ThrowExceptionOnCancel;
                     Prompt.ThrowExceptionOnCancel = true;
                     _sharpromptConfigured = true;
+                    
+                    if (OperatingSystem.IsWindows())
+                    {
+                        InitializeWindowsTerminal();
+                    }
             
                     lineEditor = new LineEditing(new LineEditorOption
                     {
@@ -146,24 +180,24 @@ public static class TerminalHost
                     });
                 }
                 
-                Logger.Initialize(actualConfig.Logging);
-                loggerInitialized = true;
+                ownsLogger = Logger.Initialize(actualConfig.Logging);
+                
+                BufferedOutput.Clear();
+                
+                Logger.LogWritten += OnLogWritten;
+                logSubscribed = true;
                 
                 _config = actualConfig;
                 _lineEditor = lineEditor;
                 _interactive = interactive;
+                _ownsLogger = ownsLogger;
                 
                 _activeReadCts = null;
                 _activeReadTask = null;
                 _commandLoopActive = false;
                 _modalActive = false;
-                BufferedOutput.Clear();
                 
                 _initialized = true;
-                
-                Logger.LogWritten += OnLogWritten;
-                logSubscribed = true;
-                
             }
             catch
             {
@@ -172,7 +206,7 @@ public static class TerminalHost
                     Logger.LogWritten -= OnLogWritten;
                 }
                 
-                if (loggerInitialized)
+                if (ownsLogger)
                 {
                     Logger.Shutdown();
                 }
@@ -188,6 +222,9 @@ public static class TerminalHost
                 _config = null;
                 _lineEditor = null;
                 _interactive = false;
+                
+                RestoreWindowsTerminal();
+                
                 _initialized = false;
                 
                 throw;
@@ -201,8 +238,6 @@ public static class TerminalHost
     /// <param name="ct">Cancellation token</param>
     public static async Task RunAsync(CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(Interrupted);
-        
         lock (TerminalLock)
         {
             ThrowIfNotInitialized();
@@ -244,13 +279,13 @@ public static class TerminalHost
                     case ReadStatus.Accepted:
                         if (!string.IsNullOrWhiteSpace(result.Text))
                         {
-                            CommandEntered?.Invoke(result.Text.Trim());
+                            CommandEntered?.Invoke(result.Text);
                         }
 
                         break;
                     case ReadStatus.Interrupted:
-                        Interrupted();
-                        break;
+                        Interrupted?.Invoke();
+                        return;
                     case ReadStatus.EndOfInput:
                         break;
                     default:
@@ -279,10 +314,15 @@ public static class TerminalHost
     {
         ArgumentNullException.ThrowIfNull(action);
 
-        if (!_interactive)
+        lock (TerminalLock)
         {
-            throw new InvalidOperationException(
-                "The current environment does not support interactive terminal operations.");
+            ThrowIfNotInitialized();
+
+            if (!_interactive)
+            {
+                throw new InvalidOperationException(
+                    "The current environment does not support interactive terminal operations.");
+            }
         }
         
         await ModalSemaphore.WaitAsync(ct).ConfigureAwait(false);
@@ -311,6 +351,8 @@ public static class TerminalHost
                 activeReadTask = _activeReadTask;
             }
 
+            bool readCanceled = false;
+            
             bool readWasActive = activeReadTask is { IsCompleted: false };
 
             if (readWasActive)
@@ -322,12 +364,15 @@ public static class TerminalHost
                 {
                     await activeReadTask!.ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (activeReadCts?.IsCancellationRequested == true)
                 {
-                    // Expected, ignore
+                    readCanceled = true;
                 }
 
-                ClearStoppedEditorLine();
+                if (readCanceled)
+                {
+                    ClearStoppedEditorLine();
+                }
             }
 
             ct.ThrowIfCancellationRequested();
@@ -404,27 +449,34 @@ public static class TerminalHost
     /// <param name="validator">Optional input validator that returns an error message for invalid input</param>
     /// <param name="ct">Cancellation token</param>
     /// <returns>The entered text</returns>
-    public static Task<string> InputAsync(string title, Func<string, string?>? validator = null, 
+    public static async Task<string> InputAsync(string title, Func<string, string?>? validator = null, 
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(title);
 
-        return RunModalAsync(() =>
+        try
         {
-            while (true)
+            return await RunModalAsync(() =>
             {
-                string value = Prompt.Input<string?>(title) ?? string.Empty;
-                string? error = validator?.Invoke(value);
-
-                if (error is null)
+                while (true)
                 {
-                    return value;
-                }
+                    string value = Prompt.Input<string?>(title) ?? string.Empty;
+                    string? error = validator?.Invoke(value);
 
-                Console.WriteLine(error);
-                Console.WriteLine();
-            }
-        }, ct);
+                    if (error is null)
+                    {
+                        return value;
+                    }
+
+                    Console.WriteLine(error);
+                    Console.WriteLine();
+                }
+            }, ct).ConfigureAwait(false);
+        }
+        catch (PromptCanceledException e)
+        {
+            throw new OperationCanceledException("The terminal input was canceled.", e, ct);
+        }
     }
     
     /// <summary>
@@ -432,29 +484,25 @@ public static class TerminalHost
     /// </summary>
     /// <param name="text">Text</param>
     // ReSharper disable once MemberCanBePrivate.Global
-    public static void Write(string text)
+    public static void WriteLine(string text)
     {
-        if (string.IsNullOrEmpty(text))
-        {
-            return;
-        }
+        ArgumentNullException.ThrowIfNull(text);
 
         lock (TerminalLock)
         {
             ThrowIfNotInitialized();
-
-            if (_modalActive)
+            
+            if (!text.EndsWith('\n'))
             {
-                BufferedOutput.Enqueue(text);
-                return;
+                text += Environment.NewLine;
             }
             
-            WriteDirect(text);
+            WriteCore(text);
         }
     }
     
     /// <summary>
-    /// Disposes the terminal host, cancelling any active read operations and releasing resources
+    /// Disposes the terminal, cancelling any active read operations and releasing resources
     /// </summary>
     public static void Shutdown()
     {
@@ -474,39 +522,53 @@ public static class TerminalHost
             {
                 throw new InvalidOperationException("Cannot shutdown while a modal operation is active.");
             }
-
-            _initialized = false;
-        }
-
-        Logger.LogWritten -= OnLogWritten;
-        
-        try
-        {
-            _lineEditor?.Dispose();
-        }
-        finally
-        {
-            Logger.Shutdown();
-
-            lock (TerminalLock)
+            
+            Logger.LogWritten -= OnLogWritten;
+            
+            try
             {
-                if (_sharpromptConfigured)
+                _lineEditor?.Dispose();
+                
+
+            }
+            finally
+            {
+                try
                 {
-                    Prompt.ThrowExceptionOnCancel = _originalThrowExceptionOnCancel;
-                    _sharpromptConfigured = false;
+                    if (_ownsLogger)
+                    {
+                        Logger.Shutdown();
+                    }
                 }
+                finally
+                {
+                    if (_sharpromptConfigured)
+                    {
+                        Prompt.ThrowExceptionOnCancel = _originalThrowExceptionOnCancel;
+                        _sharpromptConfigured = false;
+                    }
+
+                    RestoreWindowsTerminal();
                 
-                _activeReadCts = null;
-                _activeReadTask = null;
-                _lineEditor = null;
-                _config = null;
-            
-                _interactive = false;
-            
-                BufferedOutput.Clear();
+                    _ownsLogger = false;
                 
-                CommandEntered = null;
-                Interrupted = null;
+                    _windowsOutputHandle = IntPtr.Zero;
+                    _originalWindowsOutputMode = 0;
+                
+                    _activeReadCts = null;
+                    _activeReadTask = null;
+                    _lineEditor = null;
+                    _config = null;
+            
+                    _interactive = false;
+            
+                    BufferedOutput.Clear();
+                
+                    CommandEntered = null;
+                    Interrupted = null;
+                
+                    _initialized = false;
+                }
             }
         }
     }
@@ -559,6 +621,21 @@ public static class TerminalHost
     }
 
     /// <summary>
+    /// Writes text to the terminal, buffering it if a modal operation is active
+    /// </summary>
+    /// <param name="text">Text</param>
+    private static void WriteCore(string text)
+    {
+        if (_modalActive)
+        {
+            BufferedOutput.Enqueue(text);
+            return;
+        }
+        
+        WriteDirect(text);
+    }
+    
+    /// <summary>
     /// Writes text directly to the console
     /// </summary>
     /// <param name="text">Text</param>
@@ -593,12 +670,20 @@ public static class TerminalHost
     /// <param name="entry">The log entry</param>
     private static void OnLogWritten(LogEntry entry)
     {
-        if ((int)entry.Level < (int)Config.TerminalLogLevel)
+        lock(TerminalLock)
         {
-            return;
-        }
+            if (!_initialized)
+            {
+                return;
+            }
+            
+            if ((int)entry.Level < (int)Config.TerminalLogLevel)
+            {
+                return;
+            }
         
-        Write(FormatLogEntry(entry));
+            WriteCore(FormatLogEntry(entry));
+        }
     }
 
     /// <summary>
@@ -691,13 +776,13 @@ public static class TerminalHost
     }
     
     /// <summary>
-    /// Throws an exception if the terminal host has not been initialized
+    /// Throws an exception if the terminal has not been initialized
     /// </summary>
     private static void ThrowIfNotInitialized()
     {
         if (!_initialized)
         {
-            throw new InvalidOperationException("TerminalHost has not been initialized. Call Initialize() first.");
+            throw new InvalidOperationException("Terminal has not been initialized. Call Initialize() first.");
         }
     }
 
@@ -729,5 +814,65 @@ public static class TerminalHost
         // Move cursor up one line and clear the line
         Console.Out.Write("\x1b[1A\r\x1b[2K"); 
         Console.Out.Flush();
+    }
+
+    /// <summary>
+    /// Initializes the Windows terminal to enable virtual terminal processing for ANSI escape sequences
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static void InitializeWindowsTerminal()
+    {
+        IntPtr handle = Win32TerminalNative.GetStdHandle(Win32TerminalNative.StdOutHandle);
+        
+        if (handle == IntPtr.Zero ||
+            handle == Win32TerminalNative.InvalidHandleValue)
+        {
+            throw new IOException(
+                $"Failed to get the Windows console output handle. Error code: {Marshal.GetLastPInvokeError()}");
+        }
+
+        if (!Win32TerminalNative.GetConsoleMode(handle, out uint originalMode))
+        {
+            throw new InvalidOperationException("Failed to get console mode.");
+        }
+
+        uint newMode = originalMode | Win32TerminalNative.EnableProcessedOutput | 
+                       Win32TerminalNative.EnableVirtualTerminalProcessing;
+
+        _windowsOutputHandle = handle;
+        _originalWindowsOutputMode = originalMode;
+        
+        if (newMode == originalMode)
+        {
+            // Virtual terminal processing is already enabled
+            return;
+        }
+        
+        if (!Win32TerminalNative.SetConsoleMode(handle, newMode))
+        {
+            throw new InvalidOperationException("Failed to set console mode.");
+        }
+
+        _windowsOutputModeChanged = true;
+    }
+    
+    /// <summary>
+    /// Restores the original Windows console mode if it was changed to enable virtual terminal processing
+    /// </summary>
+    private static void RestoreWindowsTerminal()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        if (_windowsOutputModeChanged)
+        {
+            _ = Win32TerminalNative.SetConsoleMode(_windowsOutputHandle, _originalWindowsOutputMode);
+        }
+
+        _windowsOutputModeChanged = false;
+        _windowsOutputHandle = IntPtr.Zero;
+        _originalWindowsOutputMode = 0;
     }
 }

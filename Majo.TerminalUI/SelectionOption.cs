@@ -1,4 +1,4 @@
-﻿namespace Majo.Terminal;
+﻿namespace Majo.TerminalUI;
 
 /// <summary>
 /// Represents an option in a terminal selection

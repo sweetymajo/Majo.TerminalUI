@@ -1,6 +1,6 @@
 ﻿using Majo.Logging;
 
-namespace Majo.Terminal;
+namespace Majo.TerminalUI;
 
 /// <summary>
 /// Represents the configuration options for the terminal
