@@ -1,0 +1,4 @@
+﻿<Project>
+    <Import Project="$(MSBuildThisFileDirectory)Majo.TerminalUI\Build\Majo.TerminalUI.targets"
+            Condition="Exists('$(MSBuildThisFileDirectory)Majo.TerminalUI\Build\Majo.TerminalUI.targets')" />
+</Project>

@@ -7,6 +7,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <None Include="Build\Majo.TerminalUI.targets" Pack="true" PackagePath="buildTransitive" />
+    </ItemGroup>
+    
+    <ItemGroup>
         <ProjectReference Include="..\..\Majo.LineEditor\Majo.LineEditor\Majo.LineEditor.csproj" 
                           PrivateAssets="compile;contentfiles;build;analyzers" />
         <ProjectReference Include="..\..\Majo.Logging\Majo.Logging\Majo.Logging.csproj" />

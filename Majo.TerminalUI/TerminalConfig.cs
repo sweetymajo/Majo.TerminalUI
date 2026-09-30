@@ -1,4 +1,5 @@
 ﻿using Majo.Logging;
+// ReSharper disable PropertyCanBeMadeInitOnly.Global
 
 namespace Majo.TerminalUI;
 
@@ -30,7 +31,7 @@ public class TerminalConfig
     /// <summary>
     /// Whether to allow multi-line input in the terminal
     /// </summary>
-    public bool MultiLine { get; set; } = false;
+    public bool MultiLine { get; set; }
     
     /// <summary>
     /// Options for configuring logging behavior

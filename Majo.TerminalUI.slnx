@@ -1,5 +1,9 @@
 <Solution>
+  <Folder Name="/Meta/">
+    <File Path="Directory.Build.targets" />
+  </Folder>
   <Project Path="../Majo.LineEditor/Majo.LineEditor/Majo.LineEditor.csproj" />
   <Project Path="../Majo.Logging/Majo.Logging/Majo.Logging.csproj" />
+  <Project Path="Majo.TerminalUI.ManualTest/Majo.TerminalUI.ManualTest.csproj" />
   <Project Path="Majo.TerminalUI/Majo.TerminalUI.csproj" />
 </Solution>

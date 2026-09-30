@@ -1,0 +1,17 @@
+﻿<Project>
+    <Target Name="MajoTerminalUIRemoveTransitiveSharpromptSourceGenerator"
+            BeforeTargets="CoreCompile"
+            Condition="'$(MajoTerminalUIKeepSharpromptSourceGenerator)' != 'true'">
+
+        <ItemGroup>
+            <_MajoTerminalUIDirectSharprompt
+                    Include="@(PackageReference)"
+                    Condition="'%(PackageReference.Identity)' == 'Sharprompt'" />
+        </ItemGroup>
+
+        <ItemGroup Condition="'@(_MajoTerminalUIDirectSharprompt)' == ''">
+            <Analyzer Remove="@(Analyzer)"
+                      Condition="'%(Analyzer.Filename)' == 'Sharprompt.SourceGenerator'" />
+        </ItemGroup>
+    </Target>
+</Project>
