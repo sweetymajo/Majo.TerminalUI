@@ -1,0 +1,246 @@
+name: Publish NuGet
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-windows:
+    name: Test Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Prepare local NuGet source
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force artifacts/nuget | Out-Null
+
+      - name: Restore
+        run: dotnet restore Majo.TerminalUI.slnx -p:UsePackageReference=false
+
+      - name: Build
+        run: dotnet build Majo.TerminalUI.slnx -c Release --no-restore -p:UsePackageReference=false
+
+      - name: Test
+        run: dotnet test Majo.TerminalUI.AutoTest/Majo.TerminalUI.AutoTest.csproj -c Release --no-build --no-restore -p:UsePackageReference=false
+
+  test-linux:
+    name: Test Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Prepare local NuGet source
+        run: mkdir -p artifacts/nuget
+
+      - name: Restore
+        run: dotnet restore Majo.TerminalUI.slnx -p:UsePackageReference=false
+
+      - name: Build
+        run: dotnet build Majo.TerminalUI.slnx -c Release --no-restore -p:UsePackageReference=false
+
+      - name: Test
+        run: dotnet test Majo.TerminalUI.AutoTest/Majo.TerminalUI.AutoTest.csproj -c Release --no-build --no-restore -p:UsePackageReference=false
+
+  publish:
+    name: Publish NuGet
+    runs-on: ubuntu-latest
+    needs:
+      - test-windows
+      - test-linux
+
+    environment: nuget
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          VERSION=$(dotnet msbuild Majo.TerminalUI/Majo.TerminalUI.csproj \
+            -getProperty:Version \
+            -nologo)
+
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Invalid package version: $VERSION"
+            echo "Expected version format: x.y.z"
+            exit 1
+          fi
+
+          echo "PACKAGE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v$VERSION" >> "$GITHUB_ENV"
+
+          echo "Package version: $VERSION"
+          echo "Release tag: v$VERSION"
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if git ls-remote \
+            --exit-code \
+            --tags \
+            origin \
+            "refs/tags/${RELEASE_TAG}" > /dev/null 2>&1; then
+
+            echo "Tag ${RELEASE_TAG} already exists."
+            exit 1
+          fi
+
+      - name: Prepare local NuGet source
+        run: mkdir -p artifacts/nuget
+
+      - name: Restore
+        run: dotnet restore Majo.TerminalUI.slnx -p:UsePackageReference=false
+
+      - name: Build
+        run: dotnet build Majo.TerminalUI.slnx -c Release --no-restore -p:UsePackageReference=false
+
+      - name: Pack
+        run: dotnet pack Majo.TerminalUI/Majo.TerminalUI.csproj -c Release --no-build
+
+      - name: Validate NuGet package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PACKAGE="artifacts/nuget/Majo.TerminalUI.${PACKAGE_VERSION}.nupkg"
+          SYMBOL_PACKAGE="artifacts/nuget/Majo.TerminalUI.${PACKAGE_VERSION}.snupkg"
+
+          if [ ! -f "$PACKAGE" ]; then
+            echo "NuGet package was not generated:"
+            echo "$PACKAGE"
+            exit 1
+          fi
+
+          if [ ! -f "$SYMBOL_PACKAGE" ]; then
+            echo "Symbol package was not generated:"
+            echo "$SYMBOL_PACKAGE"
+            exit 1
+          fi
+
+          unzip -l "$PACKAGE" > package-contents.txt
+
+          grep -Fq "lib/net8.0/Majo.TerminalUI.dll" package-contents.txt
+          grep -Fq "lib/net10.0/Majo.TerminalUI.dll" package-contents.txt
+          grep -Fq "buildTransitive/Majo.TerminalUI.targets" package-contents.txt
+          grep -Fq "README.nuget.md" package-contents.txt
+          grep -Fq "LICENSE.txt" package-contents.txt
+
+          if grep -Fq "libmajo_line_editor.so" package-contents.txt; then
+            echo "Majo.TerminalUI must not embed Majo.LineEditing native runtime assets."
+            exit 1
+          fi
+
+      - name: Restore AutoTest from local NuGet package
+        run: >
+          dotnet restore
+          Majo.TerminalUI.AutoTest/Majo.TerminalUI.AutoTest.csproj
+          -p:UsePackageReference=true
+          --force
+
+      - name: Test AutoTest from local NuGet package
+        run: >
+          dotnet test
+          Majo.TerminalUI.AutoTest/Majo.TerminalUI.AutoTest.csproj
+          -c Release
+          --no-restore
+          -p:UsePackageReference=true
+
+      - name: Publish Windows package consumer
+        run: >
+          dotnet publish
+          Majo.TerminalUI.AutoTest/Majo.TerminalUI.AutoTest.csproj
+          -c Release
+          -r win-x64
+          --self-contained false
+          -p:UsePackageReference=true
+          -o artifacts/publish/win-x64
+
+      - name: Publish Linux package consumer
+        run: >
+          dotnet publish
+          Majo.TerminalUI.AutoTest/Majo.TerminalUI.AutoTest.csproj
+          -c Release
+          -r linux-x64
+          --self-contained false
+          -p:UsePackageReference=true
+          -o artifacts/publish/linux-x64
+
+      - name: Validate transitive runtime assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f artifacts/publish/win-x64/Majo.TerminalUI.dll
+          test -f artifacts/publish/win-x64/Wcwidth.dll
+          test ! -f artifacts/publish/win-x64/libmajo_line_editor.so
+
+          test -f artifacts/publish/linux-x64/Majo.TerminalUI.dll
+          test -f artifacts/publish/linux-x64/Wcwidth.dll
+          test -f artifacts/publish/linux-x64/libmajo_line_editor.so
+
+      - name: Upload NuGet packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: Majo.TerminalUI-NuGet
+          path: |
+            artifacts/nuget/*.nupkg
+            artifacts/nuget/*.snupkg
+          if-no-files-found: error
+
+      - name: NuGet login
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Publish to NuGet.org
+        run: >
+          dotnet nuget push
+          artifacts/nuget/*.nupkg
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+
+      - name: Create Git tag
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -a "${RELEASE_TAG}" \
+            "$GITHUB_SHA" \
+            -m "Majo.TerminalUI ${PACKAGE_VERSION}"
+
+          git push origin "${RELEASE_TAG}"

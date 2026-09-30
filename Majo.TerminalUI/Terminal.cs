@@ -1,10 +1,9 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
-using Majo.LineEditor;
+using Majo.LineEditing;
 using Majo.Logging;
 using Sharprompt;
-using LineEditing = Majo.LineEditor.LineEditor;
 
 #if NET9_0_OR_GREATER
 using LockType = System.Threading.Lock;
@@ -60,7 +59,7 @@ public static class Terminal
     /// <summary>
     /// The line editor instance for handling user input in interactive mode
     /// </summary>
-    private static LineEditing? _lineEditor;
+    private static LineEditor? _lineEditor;
     
     /// <summary>
     /// Cancellation token source for the active read operation
@@ -130,106 +129,15 @@ public static class Terminal
     }
 
     /// <summary>
-    /// Initializes the terminal with the specified configuration
+    /// Initializes the terminal, setting up the line editor, logger, and other necessary components
     /// </summary>
     /// <param name="config">Optional configuration for the terminal</param>
-    public static void  Initialize(TerminalConfig? config = null)
+    public static void Initialize(TerminalConfig? config = null)
     {
-        lock (TerminalLock)
-        {
-            if (_initialized)
-            {
-                return;
-            }
-            
-            var actualConfig = config ?? new TerminalConfig();
+        bool supportedSystem = OperatingSystem.IsWindows() || OperatingSystem.IsLinux();
+        bool interactive = supportedSystem && !Console.IsInputRedirected && !Console.IsOutputRedirected;
 
-            LineEditing? lineEditor = null;
-            bool ownsLogger = false;
-            bool logSubscribed = false;
-
-            try
-            {
-                bool supportedSystem = OperatingSystem.IsWindows() || OperatingSystem.IsLinux();
-                bool interactive = supportedSystem && !Console.IsInputRedirected && !Console.IsOutputRedirected;
-
-                if (!supportedSystem)
-                {
-                    throw new PlatformNotSupportedException(
-                        "The current operating system does not support interactive terminal operations.");
-                }
-                
-                if (interactive)
-                {
-                    _originalThrowExceptionOnCancel = Prompt.ThrowExceptionOnCancel;
-                    Prompt.ThrowExceptionOnCancel = true;
-                    _sharpromptConfigured = true;
-                    
-                    if (OperatingSystem.IsWindows())
-                    {
-                        InitializeWindowsTerminal();
-                    }
-            
-                    lineEditor = new LineEditing(new LineEditorOption
-                    {
-                        CommandBufferSize = actualConfig.CommandBufferSize,
-                        HistoryCount = actualConfig.HistoryCount,
-                        PollInterval = actualConfig.PollInterval,
-                        Prompt = actualConfig.Prompt,
-                        MultiLine = actualConfig.MultiLine
-                    });
-                }
-                
-                ownsLogger = Logger.Initialize(actualConfig.Logging);
-                
-                BufferedOutput.Clear();
-                
-                Logger.LogWritten += OnLogWritten;
-                logSubscribed = true;
-                
-                _config = actualConfig;
-                _lineEditor = lineEditor;
-                _interactive = interactive;
-                _ownsLogger = ownsLogger;
-                
-                _activeReadCts = null;
-                _activeReadTask = null;
-                _commandLoopActive = false;
-                _modalActive = false;
-                
-                _initialized = true;
-            }
-            catch
-            {
-                if (logSubscribed)
-                {
-                    Logger.LogWritten -= OnLogWritten;
-                }
-                
-                if (ownsLogger)
-                {
-                    Logger.Shutdown();
-                }
-                
-                lineEditor?.Dispose();
-                
-                if (_sharpromptConfigured)
-                {
-                    Prompt.ThrowExceptionOnCancel = _originalThrowExceptionOnCancel;
-                    _sharpromptConfigured = false;
-                }
-                
-                _config = null;
-                _lineEditor = null;
-                _interactive = false;
-                
-                RestoreWindowsTerminal();
-                
-                _initialized = false;
-                
-                throw;
-            }
-        }
+        InitializeCore(config, interactive);
     }
 
     /// <summary>
@@ -574,6 +482,163 @@ public static class Terminal
     }
     
     /// <summary>
+    /// The core initialization logic for the terminal
+    /// </summary>
+    /// <param name="config">Optional configuration for the terminal</param>
+    /// <param name="interactive">Whether the terminal should be initialized in interactive mode</param>
+    internal static void  InitializeCore(TerminalConfig? config, bool interactive)
+    {
+        lock (TerminalLock)
+        {
+            if (_initialized)
+            {
+                return;
+            }
+            
+            var actualConfig = config ?? new TerminalConfig();
+
+            LineEditor? lineEditor = null;
+            bool ownsLogger = false;
+            bool logSubscribed = false;
+
+            try
+            {
+                bool supportedSystem = OperatingSystem.IsWindows() || OperatingSystem.IsLinux();
+
+                if (!supportedSystem)
+                {
+                    throw new PlatformNotSupportedException(
+                        "The current operating system does not support interactive terminal operations.");
+                }
+                
+                if (interactive)
+                {
+                    _originalThrowExceptionOnCancel = Prompt.ThrowExceptionOnCancel;
+                    Prompt.ThrowExceptionOnCancel = true;
+                    _sharpromptConfigured = true;
+                    
+                    if (OperatingSystem.IsWindows())
+                    {
+                        InitializeWindowsTerminal();
+                    }
+            
+                    lineEditor = new LineEditor(new LineEditorOption
+                    {
+                        CommandBufferSize = actualConfig.CommandBufferSize,
+                        HistoryCount = actualConfig.HistoryCount,
+                        PollInterval = actualConfig.PollInterval,
+                        Prompt = actualConfig.Prompt,
+                        MultiLine = actualConfig.MultiLine
+                    });
+                }
+                
+                ownsLogger = Logger.Initialize(actualConfig.Logging);
+                
+                BufferedOutput.Clear();
+                
+                Logger.LogWritten += OnLogWritten;
+                logSubscribed = true;
+                
+                _config = actualConfig;
+                _lineEditor = lineEditor;
+                _interactive = interactive;
+                _ownsLogger = ownsLogger;
+                
+                _activeReadCts = null;
+                _activeReadTask = null;
+                _commandLoopActive = false;
+                _modalActive = false;
+                
+                _initialized = true;
+            }
+            catch
+            {
+                if (logSubscribed)
+                {
+                    Logger.LogWritten -= OnLogWritten;
+                }
+                
+                if (ownsLogger)
+                {
+                    Logger.Shutdown();
+                }
+                
+                lineEditor?.Dispose();
+                
+                if (_sharpromptConfigured)
+                {
+                    Prompt.ThrowExceptionOnCancel = _originalThrowExceptionOnCancel;
+                    _sharpromptConfigured = false;
+                }
+                
+                _config = null;
+                _lineEditor = null;
+                _interactive = false;
+                
+                RestoreWindowsTerminal();
+                
+                _initialized = false;
+                
+                throw;
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Formats a log entry for terminal output
+    /// </summary>
+    /// <param name="entry">The log entry</param>
+    /// <param name="colorMode">The color mode to use for formatting</param>
+    /// <param name="supportsColor">Whether the terminal supports color output</param>
+    /// <returns>The formatted log entry string</returns>
+    internal static string FormatLogEntry(LogEntry entry, TerminalLogColorMode colorMode, bool supportsColor)
+    {
+        var builder = new StringBuilder();
+        
+        builder.Append('[').Append(entry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")).Append("] [");
+        
+        bool useColor = supportsColor && (colorMode != TerminalLogColorMode.None);
+
+        if (useColor)
+        {
+            builder.Append(GetLogLevelColor(entry.Level, colorMode));
+        }
+
+        builder.Append(entry.LevelText);
+        
+        if (useColor)
+        {
+            builder.Append("\u001B[39m");
+        }
+        
+        builder.Append("] [").Append(entry.Tag).Append("] ").Append(entry.Content).AppendLine();
+        
+        if (entry.Exception is not null)
+        {
+            builder.AppendLine(entry.Exception.ToString());
+        }
+        
+        return builder.ToString();
+    }
+    
+    /// <summary>
+    /// Returns the ANSI escape code for the specified log level based on the configured color mode
+    /// </summary>
+    /// <param name="level">The log level</param>
+    /// <param name="colorMode">The color mode to use for formatting</param>
+    /// <returns>The ANSI escape code for the log level color</returns>
+    internal static string GetLogLevelColor(LogLevel level, TerminalLogColorMode colorMode)
+    {
+        return colorMode switch
+        {
+            TerminalLogColorMode.None => string.Empty,
+            TerminalLogColorMode.Ansi16 => GetAnsi16LogLevelColor(level),
+            TerminalLogColorMode.TrueColor => GetTrueColorLogLevelColor(level),
+            _ => throw new ArgumentOutOfRangeException(nameof(colorMode))
+        };
+    }
+    
+    /// <summary>
     /// Reads a command from the user asynchronously
     /// </summary>
     /// <param name="ct">Cancellation token</param>
@@ -692,50 +757,7 @@ public static class Terminal
     /// <param name="entry">The log entry</param>
     /// <returns>The formatted log entry string</returns>
     private static string FormatLogEntry(LogEntry entry)
-    {
-        var builder = new StringBuilder();
-        
-        builder.Append('[').Append(entry.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")).Append("] [");
-        
-        bool useColor = SupportsColor && Config.TerminalLogColorMode != TerminalLogColorMode.None;
-
-        if (useColor)
-        {
-            builder.Append(GetLogLevelColor(entry.Level));
-        }
-
-        builder.Append(entry.LevelText);
-        
-        if (useColor)
-        {
-            builder.Append("\e[39m");
-        }
-        
-        builder.Append("] [").Append(entry.Tag).Append("] ").Append(entry.Content).AppendLine();
-        
-        if (entry.Exception is not null)
-        {
-            builder.AppendLine(entry.Exception.ToString());
-        }
-        
-        return builder.ToString();
-    }
-    
-    /// <summary>
-    /// Returns the ANSI escape code for the specified log level based on the configured color mode
-    /// </summary>
-    /// <param name="level">The log level</param>
-    /// <returns>The ANSI escape code for the log level color</returns>
-    private static string GetLogLevelColor(LogLevel level)
-    {
-        return Config.TerminalLogColorMode switch
-        {
-            TerminalLogColorMode.None => string.Empty,
-            TerminalLogColorMode.Ansi16 => GetAnsi16LogLevelColor(level),
-            TerminalLogColorMode.TrueColor => GetTrueColorLogLevelColor(level),
-            _ => throw new ArgumentOutOfRangeException()
-        };
-    }
+        => FormatLogEntry(entry, Config.TerminalLogColorMode, SupportsColor);
     
     /// <summary>
     /// Returns the ANSI escape code for the specified log level in 16-color mode
@@ -746,13 +768,13 @@ public static class Terminal
     {
         return level switch
         {
-            LogLevel.Verbose => "\e[90m",
-            LogLevel.Debug => "\e[94m",
-            LogLevel.Information => "\e[92m",
-            LogLevel.Warning => "\e[93m",
-            LogLevel.Error => "\e[91m",
-            LogLevel.Fatal => "\e[31m",
-            _ => "\e[39m"
+            LogLevel.Verbose => "\u001B[90m",
+            LogLevel.Debug => "\u001B[94m",
+            LogLevel.Information => "\u001B[92m",
+            LogLevel.Warning => "\u001B[93m",
+            LogLevel.Error => "\u001B[91m",
+            LogLevel.Fatal => "\u001B[31m",
+            _ => "\u001B[39m"
         };
     }
     
@@ -765,13 +787,13 @@ public static class Terminal
     {
         return level switch
         {
-            LogLevel.Verbose => "\e[38;2;118;118;118m",
-            LogLevel.Debug => "\e[38;2;59;120;255m",
-            LogLevel.Information => "\e[38;2;22;198;12m",
-            LogLevel.Warning => "\e[38;2;249;241;165m",
-            LogLevel.Error => "\e[38;2;231;72;86m",
-            LogLevel.Fatal => "\e[38;2;197;15;31m",
-            _ => "\e[39m"
+            LogLevel.Verbose => "\u001B[38;2;118;118;118m",
+            LogLevel.Debug => "\u001B[38;2;59;120;255m",
+            LogLevel.Information => "\u001B[38;2;22;198;12m",
+            LogLevel.Warning => "\u001B[38;2;249;241;165m",
+            LogLevel.Error => "\u001B[38;2;231;72;86m",
+            LogLevel.Fatal => "\u001B[38;2;197;15;31m",
+            _ => "\u001B[39m"
         };
     }
     
