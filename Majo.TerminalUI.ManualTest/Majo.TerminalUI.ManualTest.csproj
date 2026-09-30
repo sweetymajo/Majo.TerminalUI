@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+
+        <UsePackageReference>false</UsePackageReference>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(UsePackageReference)' != 'true'">
+        <ProjectReference Include="..\Majo.TerminalUI\Majo.TerminalUI.csproj" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(UsePackageReference)' == 'true'">
+        <PackageReference Include="Majo.TerminalUI" Version="*-*" />
+    </ItemGroup>
+
+</Project>

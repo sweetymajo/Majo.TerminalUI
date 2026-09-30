@@ -1,0 +1,45 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        
+        <PackageId>Majo.TerminalUI</PackageId>
+        <Version>0.0.1</Version>
+        <PackageReleaseNotes>Initial release</PackageReleaseNotes>
+        <Authors>Sweety Majo</Authors>
+        <Description>A small terminal interaction layer for .NET console applications.</Description>
+        <PackageTags>terminal;console;cli</PackageTags>
+        <PackageOutputPath>$(MSBuildProjectDirectory)/../artifacts/nuget</PackageOutputPath>
+
+        <RepositoryType>git</RepositoryType>
+        <RepositoryUrl>https://github.com/sweetymajo/Majo.TerminalUI</RepositoryUrl>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <PackageProjectUrl>https://github.com/sweetymajo/Majo.TerminalUI</PackageProjectUrl>
+        <PackageReadmeFile>README.nuget.md</PackageReadmeFile>
+        <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(GITHUB_ACTIONS)' == 'true'">
+        <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+    
+    <ItemGroup>
+        <None Include="Build\Majo.TerminalUI.targets" Pack="true" PackagePath="buildTransitive" />
+        <None Include="README.nuget.md" Pack="true" PackagePath="" />
+        <None Include="../LICENSE.txt" Pack="true" PackagePath="" />
+    </ItemGroup>
+    
+    <ItemGroup>
+      <PackageReference Include="Majo.LineEditing" Version="0.0.3" 
+                        PrivateAssets="compile;contentfiles;build;analyzers" />
+      <PackageReference Include="Majo.Logging" Version="0.0.2" />
+      <PackageReference Include="Sharprompt" Version="3.1.2" PrivateAssets="compile;contentfiles;build;analyzers" />
+    </ItemGroup>
+
+</Project>
