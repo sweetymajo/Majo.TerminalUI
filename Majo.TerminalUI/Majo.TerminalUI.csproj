@@ -39,7 +39,7 @@
       <PackageReference Include="Majo.LineEditing" Version="0.0.3" 
                         PrivateAssets="compile;contentfiles;build;analyzers" />
       <PackageReference Include="Majo.Logging" Version="0.0.2" />
-      <PackageReference Include="Sharprompt" Version="3.1.2" PrivateAssets="compile;contentfiles;build;analyzers" />
+      <PackageReference Include="Sharprompt" Version="3.1.3" PrivateAssets="compile;contentfiles;build;analyzers" />
     </ItemGroup>
 
 </Project>
