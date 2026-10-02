@@ -6,8 +6,8 @@
         <Nullable>enable</Nullable>
         
         <PackageId>Majo.TerminalUI</PackageId>
-        <Version>0.0.1</Version>
-        <PackageReleaseNotes>Initial release</PackageReleaseNotes>
+        <Version>0.0.2</Version>
+        <PackageReleaseNotes>Add Linux terminal initialization and update package references</PackageReleaseNotes>
         <Authors>Sweety Majo</Authors>
         <Description>A small terminal interaction layer for .NET console applications.</Description>
         <PackageTags>terminal;console;cli</PackageTags>
@@ -36,10 +36,10 @@
     </ItemGroup>
     
     <ItemGroup>
-      <PackageReference Include="Majo.LineEditing" Version="0.0.3" 
+        <PackageReference Include="Majo.LineEditing" Version="0.0.3" 
                         PrivateAssets="compile;contentfiles;build;analyzers" />
-      <PackageReference Include="Majo.Logging" Version="0.0.2" />
-      <PackageReference Include="Sharprompt" Version="3.1.2" PrivateAssets="compile;contentfiles;build;analyzers" />
+        <PackageReference Include="Majo.Logging" Version="0.0.3" />
+        <PackageReference Include="Sharprompt" Version="3.1.3" />
     </ItemGroup>
 
 </Project>

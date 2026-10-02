@@ -513,14 +513,18 @@ public static class Terminal
                 
                 if (interactive)
                 {
-                    _originalThrowExceptionOnCancel = Prompt.ThrowExceptionOnCancel;
-                    Prompt.ThrowExceptionOnCancel = true;
-                    _sharpromptConfigured = true;
-                    
                     if (OperatingSystem.IsWindows())
                     {
                         InitializeWindowsTerminal();
                     }
+                    else if (OperatingSystem.IsLinux())
+                    {
+                        InitializeLinuxTerminal();
+                    }
+                    
+                    _originalThrowExceptionOnCancel = Prompt.ThrowExceptionOnCancel;
+                    Prompt.ThrowExceptionOnCancel = true;
+                    _sharpromptConfigured = true;
             
                     lineEditor = new LineEditor(new LineEditorOption
                     {
@@ -876,6 +880,15 @@ public static class Terminal
         }
 
         _windowsOutputModeChanged = true;
+    }
+    
+    /// <summary>
+    /// Initializes the Linux terminal to ensure that control characters are treated as input
+    /// </summary>
+    [SupportedOSPlatform("linux")]
+    private static void InitializeLinuxTerminal()
+    {
+        _ = Console.TreatControlCAsInput;
     }
     
     /// <summary>
