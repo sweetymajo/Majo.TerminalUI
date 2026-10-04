@@ -100,7 +100,7 @@ internal static class Program
             initialized = true;
 
             Terminal.CommandEntered += OnCommandEntered;
-            Terminal.Interrupted += OnInterrupted;
+            Terminal.Interrupted += OnInterruptedAsync;
 
             PrintIntroduction();
 
@@ -114,7 +114,7 @@ internal static class Program
             if (initialized)
             {
                 Terminal.CommandEntered -= OnCommandEntered;
-                Terminal.Interrupted -= OnInterrupted;
+                Terminal.Interrupted -= OnInterruptedAsync;
 
                 Terminal.Shutdown();
             }
@@ -164,8 +164,23 @@ internal static class Program
         }
     }
 
-    private static void OnInterrupted()
+    private static async Task OnInterruptedAsync(TerminalInterruptedEventArgs e)
     {
+        bool interrupted = await Terminal.SelectAsync(
+            "Ctrl+C detected. Choose an action",
+            [
+                new SelectionOption<bool>(true, "Interrupt current operation and restart Terminal"),
+                new SelectionOption<bool>(false, "Ignore Ctrl+C and continue")
+            ]);
+
+        if (!interrupted)
+        {
+            e.Continue = true;
+            Terminal.WriteLine("Ctrl+C ignored. Continue normal operation.");
+            return;
+        }
+        
+        Terminal.WriteLine("Ctrl+C accepted. Interrupting current operation and restarting Terminal.");
         _interrupted = true;
         _restartRequested = true;
         _nextMode = _mode;

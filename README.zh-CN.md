@@ -83,9 +83,19 @@ Terminal.CommandEntered += command =>
     Terminal.WriteLine($"Command: {command}");
 };
 
-Terminal.Interrupted += () =>
+Terminal.Interrupted += async e =>
 {
-    Terminal.WriteLine("Interrupted.");
+    bool exit = await Terminal.SelectAsync(
+        "正在结束程序，确定吗？",
+        [
+            new SelectionOption<bool>(false, "取消"),
+            new SelectionOption<bool>(true, "确定")
+        ]);
+
+    if (!exit)
+    {
+        e.ContinueCommandLoop = true;
+    }
 };
 
 try
@@ -98,7 +108,7 @@ finally
 }
 ```
 
-按下 `Ctrl+C` 会中断当前命令读取、触发 `Terminal.Interrupted`，并结束本次 `RunAsync()` 命令循环。
+按下 `Ctrl+C` 会中断当前命令读取并触发 `Terminal.Interrupted`。中断处理器可以执行异步操作，并通过把 `ContinueCommandLoop` 设置为 `true` 来继续命令输入；否则本次 `RunAsync()` 命令循环结束。
 
 ## 命令循环
 
@@ -128,6 +138,10 @@ Task terminalTask = Terminal.RunAsync(cts.Token);
 await cts.CancelAsync();
 await terminalTask;
 ```
+
+`Terminal.Interrupted` 是异步事件。当前命令读取被中断后，TerminalUI 会先等待中断处理器完成，再决定是否结束 `RunAsync()`。
+
+把 `TerminalInterruptedEventArgs.ContinueCommandLoop` 设置为 `true` 可以在处理完成后继续命令输入；如果保持为 `false`，`RunAsync()` 返回。
 
 ## 用户输入时的输出
 

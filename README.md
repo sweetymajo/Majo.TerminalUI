@@ -83,9 +83,19 @@ Terminal.CommandEntered += command =>
     Terminal.WriteLine($"Command: {command}");
 };
 
-Terminal.Interrupted += () =>
+Terminal.Interrupted += async e =>
 {
-    Terminal.WriteLine("Interrupted.");
+    bool exit = await Terminal.SelectAsync(
+        "Exit the application?",
+        [
+            new SelectionOption<bool>(false, "Cancel"),
+            new SelectionOption<bool>(true, "Exit")
+        ]);
+
+    if (!exit)
+    {
+        e.ContinueCommandLoop = true;
+    }
 };
 
 try
@@ -98,7 +108,7 @@ finally
 }
 ```
 
-`Ctrl+C` interrupts the current command read, raises `Terminal.Interrupted`, and ends the current `RunAsync()` command loop.
+`Ctrl+C` interrupts the current command read and raises `Terminal.Interrupted`. An interruption handler can perform asynchronous work and set `ContinueCommandLoop` to `true` to resume command input. Otherwise, the current `RunAsync()` command loop ends.
 
 ## Command Loop
 
@@ -128,6 +138,10 @@ Task terminalTask = Terminal.RunAsync(cts.Token);
 await cts.CancelAsync();
 await terminalTask;
 ```
+
+`Terminal.Interrupted` is asynchronous. Its handlers run after the current command read has been interrupted and before `RunAsync()` decides whether to end the command loop.
+
+Set `TerminalInterruptedEventArgs.ContinueCommandLoop` to `true` to resume command input after the handlers complete. If it remains `false`, `RunAsync()` returns.
 
 ## Output While the User Is Typing
 

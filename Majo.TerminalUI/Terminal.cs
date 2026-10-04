@@ -24,7 +24,7 @@ public static class Terminal
     /// <summary>
     /// Event triggered when the user interrupts the command loop
     /// </summary>
-    public static event Action? Interrupted;
+    public static event Func<TerminalInterruptedEventArgs, Task>? Interrupted;
     
     /// <summary>
     /// Configuration for the terminal
@@ -192,8 +192,14 @@ public static class Terminal
 
                         break;
                     case ReadStatus.Interrupted:
-                        Interrupted?.Invoke();
-                        return;
+                        var args = new TerminalInterruptedEventArgs();
+                        await InvokeInterruptedAsync(args).ConfigureAwait(false);
+                        if (!args.Continue)
+                        {
+                            return;
+                        }
+
+                        break;
                     case ReadStatus.EndOfInput:
                         break;
                     default:
@@ -689,6 +695,30 @@ public static class Terminal
         }
     }
 
+    /// <summary>
+    /// Invokes the Interrupted event asynchronously when the user interrupts the command loop
+    /// </summary>
+    /// <param name="args">Event arguments</param>
+    private static async Task InvokeInterruptedAsync(TerminalInterruptedEventArgs args)
+    {
+        var handlers = Interrupted;
+
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            if (handler is not Func<TerminalInterruptedEventArgs, Task> func)
+            {
+                continue;
+            }
+            
+            await func(args).ConfigureAwait(false);
+        }
+    }
+    
     /// <summary>
     /// Writes text to the terminal, buffering it if a modal operation is active
     /// </summary>
