@@ -2,6 +2,12 @@
 
 All notable changes to `Majo.TerminalUI` are documented in this file.
 
+## 0.0.4 - 2026-11-21
+
+### Changed
+
+- Update dependency versions.
+
 ## 0.0.3 - 2026-10-04
 
 ### Added

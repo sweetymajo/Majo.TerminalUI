@@ -1,6 +1,5 @@
 <Solution>
   <Folder Name="/GitHub/">
-    <File Path=".github/dependabot.yml" />
     <File Path=".github/pull_request_template.md" />
   </Folder>
   <Folder Name="/GitHub/Issue Templates/">
